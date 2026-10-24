@@ -75,6 +75,16 @@ func (r *Runner) Run(a config.Automation, trigger history.Trigger) error {
 		return err
 	}
 	r.record(id, a.Name, trigger, history.StatusDone, session, "")
+	// Record first, then close: a workspace closed under a live run is
+	// recorded as cancelled, and this run is done. A workspace that is
+	// already gone is the outcome we wanted; a close that fails for another
+	// reason leaves the run done and says so in the log, because the next
+	// occurrence may fail on the agent name still held by the open pane.
+	if a.CloseWorkspace == config.CloseOnSuccess {
+		if err := r.host.Close(session); err != nil {
+			log.Printf("%s: workspace %s not closed: %v", a.Name, session.WorkspaceID, err)
+		}
+	}
 	return nil
 }
 

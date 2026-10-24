@@ -17,6 +17,7 @@ type fakeOps struct {
 	tabCreate       func(workspaceID, cwd, label string) (string, error)
 	worktreeCreate  func(repo, branch, label string) (string, string, error)
 	workspaceCreate func(cwd, label string) (string, string, error)
+	workspaceClose  func(workspaceID string) error
 	agentStart      func(name, kind, paneID string, args []string) error
 	agentSubmit     func(target, text string) error
 	submitPending   func(paneID string) error
@@ -57,6 +58,13 @@ func (f *fakeOps) TabCreate(workspaceID, cwd, label string) (string, error) {
 		return workspaceID + ":p1", nil
 	}
 	return f.tabCreate(workspaceID, cwd, label)
+}
+
+func (f *fakeOps) WorkspaceClose(workspaceID string) error {
+	if f.workspaceClose == nil {
+		return nil
+	}
+	return f.workspaceClose(workspaceID)
 }
 
 func (f *fakeOps) AgentStart(name, kind, paneID string, args []string) error {
@@ -370,5 +378,44 @@ func TestARunNamingNoSessionHappensWhereItWasTriggered(t *testing.T) {
 	}
 	if ops.session != "" || s.HerdrSession != "alt" {
 		t.Fatalf("bound to %q, session = %+v; want unbound, recorded as alt", ops.session, s)
+	}
+}
+
+func TestCloseClosesTheRunsWorkspaceInItsOwnSession(t *testing.T) {
+	var gotWorkspace string
+	ops := &fakeOps{workspaceClose: func(workspaceID string) error {
+		gotWorkspace = workspaceID
+		return nil
+	}}
+	h := &live{ops: ops, knobs: fast()}
+
+	if err := h.Close(Session{WorkspaceID: "w7", HerdrSession: "automations"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotWorkspace != "w7" {
+		t.Errorf("closed workspace %q, want w7", gotWorkspace)
+	}
+	if ops.session != "automations" {
+		t.Errorf("closed in session %q, want automations", ops.session)
+	}
+}
+
+func TestCloseTreatsAWorkspaceAlreadyGoneAsClosed(t *testing.T) {
+	// A user who closes the run's workspace between the last poll and this
+	// call has already done what close_workspace asked for.
+	ops := &fakeOps{workspaceClose: func(string) error {
+		return apiErr("workspace close", herdr.CodeWorkspaceGone)
+	}}
+	h := &live{ops: ops, knobs: fast()}
+	if err := h.Close(Session{WorkspaceID: "w7"}); err != nil {
+		t.Fatalf("got %v, want nil for an already closed workspace", err)
+	}
+}
+
+func TestCloseReportsWhyItCouldNotClose(t *testing.T) {
+	boom := errors.New("herdr is down")
+	h := &live{ops: &fakeOps{workspaceClose: func(string) error { return boom }}, knobs: fast()}
+	if err := h.Close(Session{WorkspaceID: "w7"}); !errors.Is(err, boom) {
+		t.Fatalf("got %v, want the herdr error", err)
 	}
 }

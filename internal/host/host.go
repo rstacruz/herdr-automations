@@ -1,10 +1,11 @@
 // Package host is the seam between a run and the machine it happens on.
 //
-// Two methods: provision somewhere for the work to happen, then do the work.
-// Behind them sits everything that used to be the runner's problem — which
-// herdr error code means "retry", which means "the agent is gone", how long a
-// fresh pane gets to become a shell, how a delegated command's exit status is
-// recovered from a terminal that has no exit status.
+// Three methods: provision somewhere for the work to happen, do the work, and
+// take that place away once the run is done. Behind them sits everything that
+// used to be the runner's problem — which herdr error code means "retry", which
+// means "the agent is gone", how long a fresh pane gets to become a shell, how
+// a delegated command's exit status is recovered from a terminal that has no
+// exit status.
 //
 // The point of the narrowness is that runner.Run becomes testable. Four of the
 // ten releases before this seam existed fixed sequencing bugs in that function
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/DnzzL/herdr-automations/internal/config"
+	"github.com/DnzzL/herdr-automations/internal/herdr"
 )
 
 // Session is a provisioned place for a run to happen: a workspace and the pane
@@ -31,10 +33,12 @@ type Session struct {
 	HerdrSession string
 }
 
-// Host provisions somewhere for a run to happen, and does the work there.
+// Host provisions somewhere for a run to happen, does the work there, and can
+// take that place away once the run is done.
 type Host interface {
 	Provision(a config.Automation) (Session, error)
 	Do(s Session, a config.Automation, timeout time.Duration) error
+	Close(s Session) error
 }
 
 // ErrCancelled means the run's workspace was closed while it was working.
@@ -118,6 +122,20 @@ func (h *live) Provision(a config.Automation) (Session, error) {
 // Do runs the automation's work in the session and reports whether it worked.
 func (h *live) Do(s Session, a config.Automation, timeout time.Duration) error {
 	return h.in(a).workFor(a).do(s, timeout)
+}
+
+// Close takes the run's workspace away, freeing its agent name for the next
+// run. A workspace that is already gone is success — the goal is that it is not
+// there, and that is also what asking twice looks like.
+func (h *live) Close(s Session) error {
+	if s.WorkspaceID == "" {
+		return nil
+	}
+	err := h.ops.In(s.HerdrSession).WorkspaceClose(s.WorkspaceID)
+	if err == nil || h.ops.HasCode(err, herdr.CodeWorkspaceGone) {
+		return nil
+	}
+	return err
 }
 
 // work is one way of getting an automation's work done in a session. Two

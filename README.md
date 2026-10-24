@@ -179,6 +179,7 @@ automations:
     cron: "0 9 * * 1-5"           # 5-field crontab, or @daily / @hourly / @weekly
     repo: ~/Projects/myapp
     workspace: worktree           # worktree (default) | root | existing
+    close_workspace: never        # never (default) | on-success: close it after the run is done
     session: automations          # optional Herdr session the run happens in
     agent: claude                 # any `herdr agent start --kind`
     model: sonnet                 # optional → --model; kinds without the flag are caught on load
@@ -218,6 +219,30 @@ only for `existing` mode and belongs to the automation's Herdr session. If
 you close that workspace, runs fail until you update the ID; the plugin does not
 create a replacement — see [ADR 0009](docs/adr/0009-a-run-may-share-a-workspace.md).
 The `add` wizard also offers this mode.
+
+### Close the workspace when a run is done
+
+Herdr reserves an agent name for as long as the pane holding it exists, and an
+automation's agent name is fixed. A workspace left open is therefore what makes
+the next occurrence fail with `agent_name_taken`. To let a successful run close
+up after itself:
+
+```yaml
+automations:
+  - name: blogldr-daily-post
+    cron: "@daily"
+    repo: ~/Projects/blogldr
+    close_workspace: on-success
+    prompt: "Draft tomorrow's post."
+```
+
+The workspace is closed only after the run has been recorded as `done`, so
+`history` still says it succeeded; a workspace closed under a live run would be
+recorded as `cancelled`. Failed and cancelled runs, and runs that time out, keep
+their workspace and their agent for you to read. A workspace you have already
+closed is not an error. `close_workspace: on-success` cannot be combined with
+`workspace: existing`: closing a run's tab would also close the shared workspace
+when it is the last tab, so that combination is refused at load.
 
 ### Run in a dedicated Herdr session
 
@@ -295,6 +320,11 @@ neither the worktree nor the branch is removed by force: git refuses a dirty
 checkout and refuses an unmerged branch, and those refusals are worth more than
 the tidiness. **It never runs on a schedule** — a reaper would delete the very
 signal that says which runs still want you.
+
+`close_workspace: on-success` is the one exception to "an open workspace is the
+inbox": it closes the workspace when the run is done, which is what a fixed
+agent name needs to stay reusable. The worktree and branch are still there for
+`cleanup`; only the Herdr workspace goes.
 
 **What about multi-step chores?** An automation is one prompt on a clock. If your
 chore is a sequence, put the sequence in a

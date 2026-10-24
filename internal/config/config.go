@@ -37,6 +37,17 @@ const (
 	WorkspaceRoot     Workspace = "root"     // workspace on the repo root
 )
 
+// ClosePolicy says what happens to a run's workspace once the run is over.
+// Herdr reserves an agent name for as long as its pane exists, and a run's
+// agent name is fixed, so an open workspace can make the next occurrence fail
+// with agent_name_taken.
+type ClosePolicy string
+
+const (
+	CloseNever     ClosePolicy = "never"      // leave it open for review
+	CloseOnSuccess ClosePolicy = "on-success" // close it once the run is done
+)
+
 // Automation is one scheduled entry: a prompt (or delegated workflow) fired
 // on a cron schedule against an agent in a provisioned workspace.
 type Automation struct {
@@ -48,6 +59,10 @@ type Automation struct {
 	Workspace Workspace `yaml:"workspace,omitempty"`
 	// WorkspaceID is required for existing mode. Each run gets a fresh tab at Repo.
 	WorkspaceID string `yaml:"workspace_id,omitempty"`
+	// CloseWorkspace closes the run's workspace after a done run. A workspace
+	// left open keeps its agent name reserved, so the next run of the same
+	// automation can fail with agent_name_taken.
+	CloseWorkspace ClosePolicy `yaml:"close_workspace,omitempty"`
 	// Agent kind as understood by `herdr agent start --kind`; defaults to claude.
 	Agent string `yaml:"agent,omitempty"`
 	// Model handed to the agent executable as --model. Empty leaves the agent
@@ -113,6 +128,9 @@ func (a *Automation) applyDefaults() {
 	if a.Workspace == "" {
 		a.Workspace = WorkspaceWorktree
 	}
+	if a.CloseWorkspace == "" {
+		a.CloseWorkspace = CloseNever
+	}
 	if a.Agent == "" {
 		a.Agent = "claude"
 	}
@@ -156,6 +174,15 @@ func (a *Automation) validate() error {
 	}
 	if a.Workspace != WorkspaceExisting && a.WorkspaceID != "" {
 		return fmt.Errorf("%s: workspace_id requires existing mode", a.Name)
+	}
+	if a.CloseWorkspace != "" && a.CloseWorkspace != CloseNever && a.CloseWorkspace != CloseOnSuccess {
+		return fmt.Errorf("%s: close_workspace must be never or on-success, got %q", a.Name, a.CloseWorkspace)
+	}
+	// Closing a run's tab can close the workspace when it is the last one,
+	// which would take away the user's shared space. Refuse a combination that
+	// cannot be expressed without that risk.
+	if a.CloseWorkspace == CloseOnSuccess && a.Workspace == WorkspaceExisting {
+		return fmt.Errorf("%s: close_workspace: on-success cannot be combined with workspace: existing; closing a run's tab can close the shared workspace", a.Name)
 	}
 	// The name becomes a directory under Herdr's config dir; whether that
 	// session is running is a 3am fact, not a load-time one.
