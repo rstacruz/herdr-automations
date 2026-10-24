@@ -39,6 +39,7 @@ automations:
     agent_args: ["--verbose"]               # optional, verbatim agent flags
     timeout_minutes: 60           # optional, default 60
     catch_up_minutes: 120         # optional: how late a sleep-delayed run may start; -1 never
+    close_workspace: never        # optional: on-success closes the workspace after a done run
     # disabled: true              # keep the entry, stop scheduling it
 ```
 
@@ -78,6 +79,12 @@ Exactly one of `prompt` / `workflow` is required.
   no worktree. Propose it for a frequent schedule — hourly and up — where a
   workspace per run would bury the sidebar. Never invent the ID: if the user has
   not given one, ask, or write the entry with `worktree`.
+- `close_workspace: on-success` closes a run's workspace once it is recorded
+  `done`, which frees its fixed agent name for the next occurrence. Propose it
+  for frequent schedules whose runs you do not need to revisit, or after an
+  `agent_name_taken` failure. Failed, cancelled and timed-out runs keep their
+  workspace, and the worktree still exists for `cleanup`. It cannot be combined
+  with `workspace: existing`.
 - `session:` names the Herdr session runs happen in, whether triggered by cron
   or by hand. Add it only when the user asks for runs to land in a specific or
   dedicated session; `herdr session list` shows the names. The session must be

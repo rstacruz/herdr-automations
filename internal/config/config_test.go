@@ -45,6 +45,9 @@ automations:
 	if a.Workspace != WorkspaceWorktree || a.Agent != "claude" || a.TimeoutMinutes != 60 {
 		t.Fatalf("defaults not applied: %+v", a)
 	}
+	if a.CloseWorkspace != CloseNever {
+		t.Fatalf("close_workspace defaulted to %q, want never: a workspace outlives its run unless asked", a.CloseWorkspace)
+	}
 	home, _ := os.UserHomeDir()
 	if a.Repo != filepath.Join(home, "Projects/foo") {
 		t.Fatalf("home not expanded: %s", a.Repo)
@@ -256,6 +259,51 @@ func TestSaveRefusesToDropTheEntriesThatDidNotLoad(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "broken") {
 		t.Fatal("the broken entry was deleted from the file")
+	}
+}
+
+func TestLoadCloseWorkspaceOnSuccess(t *testing.T) {
+	withConfig(t, `automations:
+  - {name: inbox, cron: "@hourly", repo: /x, prompt: p, close_workspace: on-success}
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Find("inbox")
+	if a == nil {
+		t.Fatalf("automation did not load: %+v", cfg.Invalid)
+	}
+	if a.CloseWorkspace != CloseOnSuccess {
+		t.Errorf("close_workspace = %q, want on-success", a.CloseWorkspace)
+	}
+}
+
+func TestCloseWorkspaceRefusesWhatItCannotPromise(t *testing.T) {
+	cases := map[string]struct{ entry, want string }{
+		"unknown policy": {
+			`{name: a, cron: "@daily", repo: /x, prompt: p, close_workspace: sometimes}`,
+			"close_workspace must be never or on-success",
+		},
+		"existing mode": {
+			`{name: a, cron: "@daily", repo: /x, prompt: p, workspace: existing, workspace_id: w7, close_workspace: on-success}`,
+			"cannot be combined with workspace: existing",
+		},
+	}
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			withConfig(t, "automations:\n  - "+tc.entry+"\n")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("want a diagnostic, not a failed load: %v", err)
+			}
+			if len(cfg.Invalid) != 1 || !strings.Contains(cfg.Invalid[0].Message, tc.want) {
+				t.Fatalf("invalid = %+v, want one diagnostic containing %q", cfg.Invalid, tc.want)
+			}
+			if len(cfg.Automations) != 0 {
+				t.Fatalf("loaded %d entries, want none: close_workspace could not be promised", len(cfg.Automations))
+			}
+		})
 	}
 }
 

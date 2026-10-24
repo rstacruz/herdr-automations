@@ -2,6 +2,15 @@
 
 What changed for someone using the plugin. Dates are release dates.
 
+## Unreleased
+
+- `close_workspace: on-success` closes a run's workspace after the run is
+  recorded `done`, so the automation's fixed agent name is free for the next
+  occurrence instead of failing it with `agent_name_taken`. Failed, cancelled
+  and timed-out runs keep their workspace and agent for you to read, as do
+  missed occurrences (which never provision one). A workspace Herdr already
+  closed is not an error. Not available with `workspace: existing`.
+
 ## v0.10.0 — 2026-10-20
 
 - `herdr-automations` works from a shell after install. Run

@@ -188,6 +188,13 @@ func (c Client) TabCreate(workspaceID, cwd, label string) (string, error) {
 	return res.RootPane.PaneID, nil
 }
 
+// WorkspaceClose closes a workspace and everything in it. Herdr keeps an
+// agent's name reserved while its pane exists, so closing a finished run's
+// workspace is what makes its name available to the next run.
+func (c Client) WorkspaceClose(workspaceID string) error {
+	return c.run(nil, "workspace", "close", workspaceID)
+}
+
 // Worktree is one checkout backing a workspace. OpenWorkspaceID is empty once
 // the workspace has been closed, which is the only durable signal Herdr keeps
 // about whether anyone came back to look at a run.

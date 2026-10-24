@@ -33,9 +33,11 @@ func (f *fakeSink) NotificationShow(title, body string, sound herdr.Sound) error
 type fakeHost struct {
 	provision func(config.Automation) (host.Session, error)
 	do        func(host.Session, config.Automation, time.Duration) error
+	close     func(host.Session) error
 
 	mu       sync.Mutex
 	timeouts []time.Duration
+	closed   []string
 }
 
 func (f *fakeHost) Provision(a config.Automation) (host.Session, error) {
@@ -53,6 +55,16 @@ func (f *fakeHost) Do(s host.Session, a config.Automation, timeout time.Duration
 		return nil
 	}
 	return f.do(s, a, timeout)
+}
+
+func (f *fakeHost) Close(s host.Session) error {
+	f.mu.Lock()
+	f.closed = append(f.closed, s.WorkspaceID)
+	f.mu.Unlock()
+	if f.close == nil {
+		return nil
+	}
+	return f.close(s)
 }
 
 // runs is the history as the board and `history` would read it back.
@@ -325,5 +337,93 @@ func TestHistoryRemembersWhichSessionARunLivesIn(t *testing.T) {
 	}
 	if got := runs(t)[0].Session; got != "automations" {
 		t.Fatalf("session = %q, want automations: the board cannot find w1 without it", got)
+	}
+}
+
+func TestRunClosesTheWorkspaceOfADoneRunWhenAsked(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	a := automation()
+	a.CloseWorkspace = config.CloseOnSuccess
+	h := &fakeHost{}
+
+	if err := New(h).Run(a, "cron"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.closed) != 1 || h.closed[0] != "w1" {
+		t.Fatalf("closed = %v, want exactly the run's workspace w1", h.closed)
+	}
+	if got := runs(t)[0].Status; got != history.StatusDone {
+		t.Errorf("status = %q, want done", got)
+	}
+}
+
+func TestRunKeepsTheWorkspaceOfAFailedRun(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	a := automation()
+	a.CloseWorkspace = config.CloseOnSuccess
+	h := &fakeHost{do: func(host.Session, config.Automation, time.Duration) error {
+		return errors.New("start claude agent: boom")
+	}}
+
+	if err := New(h).Run(a, "cron"); err == nil {
+		t.Fatal("want the run to fail")
+	}
+	if len(h.closed) != 0 {
+		t.Fatalf("closed = %v, want the workspace left open for review", h.closed)
+	}
+}
+
+func TestRunLeavesTheWorkspaceOpenUnlessAskedToCloseIt(t *testing.T) {
+	for _, policy := range []config.ClosePolicy{"", config.CloseNever} {
+		t.Run(string(policy), func(t *testing.T) {
+			t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+			a := automation()
+			a.CloseWorkspace = policy
+			h := &fakeHost{}
+
+			if err := New(h).Run(a, "cron"); err != nil {
+				t.Fatal(err)
+			}
+			if len(h.closed) != 0 {
+				t.Fatalf("closed = %v, want no close without close_workspace: on-success", h.closed)
+			}
+		})
+	}
+}
+
+func TestRunRecordsDoneBeforeItClosesTheWorkspace(t *testing.T) {
+	// Closing a workspace under a live run is how Herdr reports a cancellation.
+	// Reading the log here pins the order: already done when close happens.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	a := automation()
+	a.CloseWorkspace = config.CloseOnSuccess
+	var atClose []history.Status
+	h := &fakeHost{close: func(host.Session) error {
+		atClose = statuses(t, "triage")
+		return nil
+	}}
+
+	if err := New(h).Run(a, "cron"); err != nil {
+		t.Fatal(err)
+	}
+	if len(atClose) == 0 || atClose[len(atClose)-1] != history.StatusDone {
+		t.Fatalf("at close time history was %v, want the run already done", atClose)
+	}
+	if got := runs(t)[0].Status; got != history.StatusDone {
+		t.Errorf("final status = %q, want done, not cancelled", got)
+	}
+}
+
+func TestAFailedCloseDoesNotFailADoneRun(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	a := automation()
+	a.CloseWorkspace = config.CloseOnSuccess
+	h := &fakeHost{close: func(host.Session) error { return errors.New("herdr is down") }}
+
+	if err := New(h).Run(a, "cron"); err != nil {
+		t.Fatalf("got %v, want nil: the work succeeded", err)
+	}
+	if got := runs(t)[0].Status; got != history.StatusDone {
+		t.Errorf("status = %q, want done", got)
 	}
 }

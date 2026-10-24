@@ -5,6 +5,9 @@ automations:
     cron: "0 9 * * 1-5"
     repo: ~/Projects/myapp
     workspace: worktree
+    # Optional: close the run's workspace once it is recorded done, freeing the
+    # fixed agent name for the next occurrence. Never closes a failed run.
+    close_workspace: never   # never (default) | on-success
     # Optional: provision every run in this Herdr session, kept apart from the
     # ones you work in. It must be running; the plugin never starts it.
     session: automations
